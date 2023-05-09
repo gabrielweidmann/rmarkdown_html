@@ -1,0 +1,181 @@
+---
+title: "MIP"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(plotly)
+library(readxl)
+library(googlesheets4)
+
+##### Carga de datos ####
+
+
+url <- "https://docs.google.com/spreadsheets/d/1WNX0su6VzdKd3KYP57lUqmpYNZMGJjYKRj02rkwNtc0/edit?usp=sharing"
+
+
+
+ci <- as.matrix(read_sheet(url,
+                 sheet = "CI",
+                 col_names = F)
+)
+
+x <- as.matrix(read_sheet(url,
+                          sheet = "x",
+                          col_names = F))
+
+
+names <- read_sheet(url,
+                    sheet = "nombres",
+                    col_names = F)
+
+
+names <- as.vector(as.matrix(names))
+
+
+empleo_er <- as.vector(as.matrix(read_sheet(url,
+                                  sheet = "empleo_er",
+                                  col_names = F)))
+
+empleo_arg <- as.vector(as.matrix(read_sheet(url,
+                                            sheet = "empleo_arg",
+                                            col_names = F)))
+
+ramas <- as.matrix(read_sheet(url,
+                              sheet = "ramas",
+                              col_names = F))
+
+
+##### Matrices nacionales ####
+
+# matriz de coefcientes
+a <- ci %*% solve(diag(as.vector(x)))
+
+colnames(a) <- names
+rownames(a) <- names
+
+
+#Matriz inversa de leontieff
+leont <- solve(diag(45)-a)
+min(leont)
+
+
+##### Matriz de regionalizacion ####
+
+coef <- (empleo_er/sum(empleo_er))/(empleo_arg/sum(empleo_arg)) #vector de coeficiente de localización - SLQ
+coef[is.na(coef)] <- 1
+
+
+coef
+
+coef2 <- coef %*% (1/t(coef)) #matriz de coeficiente de localización - CLQ
+
+coef2[is.na(coef2)] <- 0
+coef2[coef2>10000] <- 0
+
+diag(coef2) <- coef # ajusto la diagonal principal - ACLQ
+
+coef2[coef2>1] <- 1 # ajusto por coeficientes mayores a 1
+
+
+##### Regionalizando con ACLQ ####
+ar <- a*coef2 # regionalizo con una multiplicación SIMPLE de matrices
+max(ar)
+
+arl <- solve(diag(45)-ar) #calculo la inversa de leontieff 
+
+mult_simple_er <- colSums(ar)
+mult_simple_nac <- colSums(a)
+
+mult_er <- colSums(arl)
+mult_nac <- colSums(leont)
+
+multi <- cbind(mult_simple_er, mult_simple_nac, mult_er, mult_nac)
+
+##### Ajuste por lambda para FLQ ####
+
+lambda <- (log2(1+(sum(empleo_er)/sum(empleo_arg))))^0.3
+flq <- coef2*lambda
+
+a_flq <- a*flq
+ar_flq <- solve(diag(45)-a_flq)
+mult_er_flq <- colSums(ar_flq)
+
+multi_con_flq <- cbind(mult_er, 
+                       mult_er_flq)
+
+##### Matriz B de demanda ####
+
+B <- solve(diag(as.vector(x)))%*%ci
+
+Br <- B*flq 
+
+G <- solve(diag(45)-Br)
+
+bl_d <- colSums(a_flq)
+fl_d <- rowSums(Br)
+
+bl_t <- colSums(ar_flq)
+fl_t <- rowSums(G)
+
+bl_n <- colSums(ar_flq)/mean(bl_t)
+fl_n <- rowSums(G)/mean(fl_t)
+
+data <- data.frame(bl_n, fl_n, mult_er, empleo_er, ramas)
+
+colnames(data)[5] <- "rama_1"
+colnames(data)[6] <- "rama_2"
+
+
+
+library(tidyverse)
+
+data <- data %>%
+  mutate(clasif = case_when(bl_n>1 & fl_n>1 ~ "Clave",
+                                   bl_n<1 & fl_n>1 ~ "Estratégico",
+                                   bl_n>1 & fl_n<1 ~ "Impulsor",
+                                   bl_n<1 & fl_n<1 ~ "Independiente"))
+
+xtabs(data$empleo_er ~ data$clasif)
+
+data$empleo_er <- (data$empleo_er)/mean(data$empleo_er)
+
+
+
+```
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Chart A
+
+```{r}
+plot_ly(data=data,
+        x=~bl_n,
+        y=~fl_n,
+        color=~rama_1,
+        text=~rownames(data),
+        size=~empleo_er,
+        sizes=c(100,10000))
+
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Chart B
+
+```{r}
+
+```
+
+### Chart C
+
+```{r}
+
+```
+
